@@ -1,0 +1,375 @@
+---
+title: "summary_serfor_candidatos"
+output: html_document
+---
+
+# 
+
+```{r}
+master_path = "E:\\All\\Serfor\\data"
+setwd(master_path)
+
+pacman::p_load(
+  tidyverse, stringi, DBI, RSQLite, here
+)
+
+limpiar_nombre <- function(nombre) {
+  nombre %>%
+    # 1. Eliminar texto entre paréntesis
+    str_remove_all("\\(.*?\\)") %>%
+    # 2. Strip de espacios (implícito al final con str_trim)
+    # 3. Convertir a ASCII (equivalente a unidecode)
+    stri_trans_general("Latin-ASCII") %>%
+    # 4. Eliminar todo lo que no sea alfanumérico o espacio
+    str_remove_all("[^a-zA-Z0-9\\s]") %>%
+    # 5. Reemplazar múltiples espacios por uno solo
+    str_replace_all("\\s+", " ") %>%
+    # Trim espacios al inicio y final y convertir a minúsculas
+    str_trim() %>%
+    str_to_lower()
+}
+
+```
+
+```{r}
+con = dbConnect(SQLite(), paste0(master_path, "/in/infractores_representantes.db"))
+representantes_empresas <- tbl(con, "representantes") %>%
+  select(ruc, nro_documento, nombre, cargo) %>% 
+  collect() %>%
+  distinct() %>% 
+  as_tibble()
+# infractores_unicos <- 
+infractores_details = read_csv(here("data/raw/infractores_unicos_identificados.csv"), show_col_types = F) %>% 
+  mutate(across(where(is.numeric), \(x) replace_na(x, 0)))
+
+candidatos <- 'E:\\All\\infogob_data_peru\\data\\02_resultados\\todas_elecciones.csv' %>% 
+  read_csv(show_col_types = F) %>% 
+  distinct(name_candidato, cargo_postula, cargo_electo, url_candidato)
+
+```
+
+
+
+```{r}
+candidatos_raw <- dir(here('data', 'raw', 'elecciones_nombres_separados'), recursive = T, full.names = T) %>% 
+  map(readxl::read_xlsx) %>% 
+  reduce(bind_rows)
+candidatos_nombres <- 
+  candidatos_raw %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    nombre_apellido = paste(prenombres, primer_apellido, segundo_apellido),
+    apellido_nombre = paste(primer_apellido, segundo_apellido, prenombres)
+  ) %>% 
+  mutate(across(c(nombre_apellido, apellido_nombre), \(x) limpiar_nombre(x))) %>% 
+  distinct(
+    cargo, nombre_apellido, apellido_nombre
+  )
+```
+
+
+```{r}
+
+infractores_details <- 
+  infractores_details %>% 
+  mutate(infractor = limpiar_nombre(infractor)) %>% 
+  distinct() %>% 
+  mutate(
+    type = case_when(
+      is_ruc_empresa == 1 & str_detect(infractor, "comunidad") ~ "comunidad",
+      is_ruc_empresa == 1 & str_detect(infractor, "municipa") ~ "municipalidad",
+      is_ruc_empresa == 1 & str_detect(infractor, "univer") ~ "universidad",
+      is_ruc_empresa == 1 & str_detect(infractor, "asenta") ~ "asentamiento",
+      is_ruc_empresa == 1 & str_detect(infractor, "junta") ~ "junta", 
+      is_ruc_empresa == 1 ~ "empresa", 
+      T ~ "otros"
+    )
+  )
+representantes_empresas <- 
+  representantes_empresas %>% 
+  mutate(name = limpiar_nombre(nombre))
+
+
+
+infractor_unique <- 
+  infractores_details %>% 
+  group_by(documento_identidad) %>% 
+  slice(1) %>% 
+  ungroup()
+
+infractores = read_csv(here("data/raw/infractores_historial.csv"), show_col_types = F)
+```
+
+
+```{r}
+# ver si un representante legal fue un candidato
+
+representantes_empresas <- 
+  representantes_empresas %>% 
+  mutate(
+    fue_candidato1 = ifelse(name %in% candidatos_nombres$nombre_apellido, 1, 0),
+    fue_candidato2 = ifelse(name %in% candidatos_nombres$apellido_nombre, 1, 0)
+  ) %>% 
+  mutate(
+    fue_candidato = ifelse((fue_candidato1 + fue_candidato2) > 0, 1, 0),
+    .keep = 'unused'
+  ) 
+
+
+infractores_details <- 
+  infractores_details %>% 
+  mutate(
+    fue_candidato1 = ifelse(infractor %in% candidatos_nombres$nombre_apellido, 1, 0),
+    fue_candidato2 = ifelse(infractor %in% candidatos_nombres$apellido_nombre, 1, 0)
+  ) %>% 
+  mutate(
+    fue_candidato = ifelse((fue_candidato1 + fue_candidato2) > 0, 1, 0),
+    .keep = 'unused'
+  ) 
+
+```
+
+
+
+## Infracciones por tipo
+
+
+
+```{r}
+infractor_unique %>% 
+  count(is_ruc) %>% 
+  mutate(
+    p = n / sum(n) * 100
+  )
+```
+
+
+
+
+```{r}
+infractor_unique %>% 
+  filter(is_ruc == 1) %>% 
+  count(is_ruc_empresa) %>% 
+  mutate(
+    p = n / sum(n) * 100
+  )
+```
+
+
+```{r}
+infractor_unique %>% 
+  filter(is_ruc_empresa == 1) %>% 
+  count(type) %>% 
+  mutate(
+    p = n / sum(n) * 100
+  )
+```
+
+# Detalles
+
+```{r}
+representantes_empresas %>% 
+  distinct(nro_documento, fue_candidato) %>% 
+  count(fue_candidato) %>% 
+  mutate(
+    p = n / sum(n) * 100
+  )
+```
+
+```{r}
+infractores_details %>% 
+  filter(is_ruc_empresa == 0) %>% 
+  distinct(documento_identidad, fue_candidato) %>% 
+  count(fue_candidato) %>% 
+  mutate(
+    p = n / sum(n) * 100
+  )
+```
+
+
+```{r}
+
+
+
+informacion_infractor <- 
+  infractores_details %>% 
+  group_by(documento_identidad) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  distinct(documento_identidad, is_ruc, is_ruc_empresa, is_ruc_persona, fue_candidato)
+
+informacion_representante <- 
+  representantes_empresas %>% 
+  group_by(ruc) %>% 
+  summarise(
+    # si un representante fue un candidato
+    any_candidato = sum(fue_candidato)
+  ) %>% 
+  filter(any_candidato > 0) 
+# detalle de los infractores con candidatos
+detalles_de_infractores <- 
+  informacion_infractor %>% 
+  mutate(
+    representante_candidato = ifelse(documento_identidad%in% informacion_representante$ruc, 1, 0)
+  ) 
+
+```
+
+```{r}
+infractores_candidatos <- 
+  infractores %>% 
+  select(!numero) %>% 
+  distinct(infractor, documento_identidad, resolucion_sancionadora, fecha_resolucion, organo_sancionador) %>% 
+  mutate(
+    fecha_resolucion = lubridate::dmy(fecha_resolucion)
+  ) %>% 
+  left_join(detalles_de_infractores) %>% 
+  mutate(across(where(is.numeric), ~ replace_na(., 0))) 
+
+infracciones_09 <- 
+  infractores_candidatos %>% 
+  mutate(
+    mes = floor_date(fecha_resolucion, "month"), 
+    year = year(fecha_resolucion),
+    type_person = case_when(
+      is_ruc_persona == 1 ~ "RUC 10", 
+      is_ruc_empresa == 1 ~ "RUC 20", 
+      T ~ "persona",
+    )
+  ) %>% 
+  filter(year > 2009, year <= 2024) 
+
+
+
+
+```
+
+
+```{r}
+infracciones_09 %>% 
+  count(type_person, mes) %>%
+  ggplot(aes(x = mes, y = n, group = type_person,  color = type_person)) +
+  geom_line() +
+  labs(
+    title = "Evolución Mensual de Infracciones",
+    x = "Fecha",
+    y = "Número de Infracciones"
+  ) +
+  scale_x_date(breaks = "24 months", date_labels = "%Y") +
+  theme_minimal()
+
+```
+
+
+```{r}
+infracciones_09 %>% 
+  count(type_person, year) %>%
+  ggplot(aes(x = year, y = n, group = type_person,  color = type_person)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Evolución Anual de Infracciones",
+    x = "Fecha",
+    y = "Número de Infracciones"
+  ) +
+  scale_x_continuous(breaks = seq(2010, 2025, 2)) +
+  theme_minimal() 
+```
+
+```{r}
+infracciones_09 %>% 
+  count(type_person, year) %>%
+  # Calcular la proporción por año
+  group_by(year) %>%
+  mutate(proporcion = n / sum(n)) %>%
+  ungroup() %>%
+  # Crear el gráfico
+  ggplot(aes(x = year, y = proporcion, fill = type_person)) +
+  geom_area(position = "fill", alpha = 0.8) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_continuous(breaks = seq(2010, 2025, 2)) +
+  labs(
+    title = "Composición Relativa de Infracciones por Tipo de Persona",
+    subtitle = "Proporción anual",
+    x = "Año",
+    y = "Proporción",
+    fill = "Tipo de Persona"
+  ) +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")  
+```
+
+```{r}
+infracciones_09 %>%
+  mutate(
+    organo_sancionador = ifelse(organo_sancionador %in% c('INRENA', 'SERNANP', NA_character_), "OTROS", organo_sancionador)
+  ) %>% 
+  drop_na(organo_sancionador) %>% 
+  count(organo_sancionador, year) %>%
+  ggplot(aes(x = year, y = n, group = organo_sancionador,  color = organo_sancionador)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Evolución Anual de Infracciones - Por organo sancionador",
+    x = "Fecha",
+    y = "Número de Infracciones"
+  ) +
+  scale_x_continuous(breaks = seq(2010, 2025, 2)) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1") 
+```
+
+
+```{r}
+conteo_infracciones_empresas <- 
+  infracciones_09 %>%
+  mutate(candidato = ifelse(fue_candidato + representante_candidato > 0, 1, 0)) %>% 
+  count(is_ruc, documento_identidad, sort = T) 
+
+p99_empresas
+```
+
+
+```{r}
+infracciones_09 %>% 
+  filter(
+    is_ruc == 0
+  ) %>% 
+  count(fue_candidato) %>% 
+  mutate(
+    p = n / sum(n)
+  )
+```
+
+
+```{r}
+q <- 0.99
+infracciones_09 %>% 
+  count(
+    type_person, documento_identidad
+  ) %>% 
+  group_by(type_person) %>% 
+  mutate(
+    p_99 = quantile(n, q)
+  ) %>% 
+  filter(n < p_99) %>%
+  select(!documento_identidad) %>% 
+  group_by(type_person) %>% 
+  summarise(
+    n_obs = n(),
+    min = min(n),
+    media = median(n),
+    sd = sd(n, na.rm = T),
+    p25 = quantile(n, .25),
+    p50 = quantile(n, .5),
+    p75 = quantile(n, .75),
+    p95 = quantile(n, .95),
+    p99 = quantile(n, .99),
+    max = max(n)
+  ) %>% 
+  pivot_longer(!c(type_person)) %>% 
+  pivot_wider(names_from = type_person, values_from = value) %>% 
+  knitr::kable(digits = 2) %>% 
+  clipr::write_clip()
+```
+
