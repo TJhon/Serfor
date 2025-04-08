@@ -3,7 +3,7 @@ from tqdm import tqdm
 import pandas as pd
 
 
-save_path = input_path = "data/historial"
+save_path = input_path = "data/raw/historial_infractores"
 os.makedirs(save_path, exist_ok=True)
 output_path = "data/raw"
 os.makedirs(output_path, exist_ok=True)
@@ -34,6 +34,8 @@ def download_data ():
 
         except requests.RequestException as e:
             print(f"Error al descargar {url}: {e}")
+
+download_data()
 
 output_file = os.path.join(output_path, "infractores_historial.csv")
 
@@ -80,9 +82,3 @@ else:
     print("No se encontraron archivos CSV para combinar.")
 
 
-# def main():
-#     print("Hello from serfor!")
-
-
-# if __name__ == "__main__":
-#     main()
