@@ -1,3 +1,8 @@
+
+"""
+HISTORIAL DE INFRACTORES DE DATOS ABIERTOS
+"""
+
 import requests, os
 from tqdm import tqdm
 import pandas as pd
